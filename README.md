@@ -1,54 +1,76 @@
-# Rebotics Mail — GitHub Pages
+# Rebotics Mail Full Stack
 
-A complete static webmail **frontend/demo** for `mail.rebotics.in`.
+This package turns the existing GitHub Pages webmail UI into a real backend architecture.
 
-## Files
+## Architecture
 
-- `index.html` — application shell and UI
-- `assets/style.css` — responsive styling and dark mode
-- `assets/app.js` — mailbox demo logic using browser localStorage
-- `CNAME` — custom GitHub Pages domain
-- `README.md` — deployment instructions
+GitHub Pages (`mail.rebotics.in`)
+→ HTTPS API (`api.rebotics.in`)
+→ Node.js/Express
+→ PostgreSQL
+→ Cloudflare Email Service SMTP for outbound mail
 
-## Deploy to GitHub Pages
+Incoming:
+Cloudflare Email Routing
+→ Cloudflare Worker
+→ `POST /api/inbound`
+→ PostgreSQL
+→ webmail inbox
 
-1. Create a GitHub repository, for example `rebotics-mail`.
-2. Upload the files while preserving the folder structure.
-3. Open **Settings → Pages**.
-4. Under **Build and deployment**, select **Deploy from a branch**.
-5. Select the `main` branch and `/ (root)`, then Save.
-6. GitHub will publish the site.
-7. The included `CNAME` requests the custom domain `mail.rebotics.in`.
+## Backend setup
 
-## DNS
+1. Install Node.js 22+ and PostgreSQL on a VPS/server.
+2. Copy `backend/.env.example` to `backend/.env`.
+3. Set `DATABASE_URL`, `JWT_SECRET`, `MAIL_DOMAIN`, `SMTP_PASS`, and `INBOUND_WEBHOOK_SECRET`.
+4. From `backend/` run:
+   `npm install`
+   `npm run db:init`
+   `npm start`
+5. Put Nginx/Caddy in front of the Node app and expose:
+   `https://api.rebotics.in`
+6. Set `FRONTEND_ORIGIN=https://mail.rebotics.in`.
 
-At your DNS provider, create a CNAME record:
+## Cloudflare outbound mail
 
-`mail` → `<your-github-username>.github.io`
+Cloudflare Email Service currently supports outbound sending through Workers, REST API, and authenticated SMTP. This backend uses SMTP:
 
-If your DNS provider already has a conflicting `mail` A/CNAME record, remove or replace it as appropriate.
+Host: `smtp.mx.cloudflare.net`
+Port: `465`
+TLS: implicit
+Username: `api_token`
+Password: Cloudflare API token with Email Sending: Edit
 
-Then return to **GitHub → Settings → Pages → Custom domain**, enter:
+Onboard `rebotics.in` under Cloudflare Email Service > Email Sending and configure the domain's DNS/authentication records.
 
-`mail.rebotics.in`
+## Cloudflare inbound mail
 
-Enable HTTPS after GitHub verifies the domain.
+1. Deploy `cloudflare-inbound` as a Worker.
+2. Set:
+   `BACKEND_INBOUND_URL=https://api.rebotics.in/api/inbound`
+   `INBOUND_WEBHOOK_SECRET=<same secret as backend>`
+3. In Cloudflare Email Service > Email Routing, route the desired `@rebotics.in` addresses to the Worker.
+4. The Worker posts incoming messages to the backend.
 
-## Important: this is not an email server
+## Security
 
-GitHub Pages can host the webmail interface, but it cannot provide real SMTP/IMAP mailboxes, email delivery, or server-side authentication.
+- Never commit `.env`.
+- Use a long random JWT secret.
+- Use a separate random inbound webhook secret.
+- Use HTTPS only.
+- Restrict CORS to `https://mail.rebotics.in`.
+- Add rate limiting/WAF before public launch.
+- Add email verification and password reset before opening registration to the public.
+- Add a MIME parser for inbound RFC822 messages before treating `raw` as plain text.
+- Add attachment storage (object storage) rather than putting large attachments in PostgreSQL.
 
-The current app is a browser-only demo. "Send" stores a message in localStorage and does **not** send an actual email.
+## Important limitation
 
-For production, connect the frontend to a real backend/API that handles:
+Cloudflare Email Routing is primarily routing/processing, not a complete IMAP mailbox service. This architecture stores received messages in PostgreSQL for your custom webmail UI. It does not expose IMAP/POP3 for conventional mail clients such as Outlook/Thunderbird. If you need IMAP/POP3, deploy a real mailbox stack such as Postfix + Dovecot or use a hosted mailbox provider.
 
-- authentication and sessions
-- mailbox storage
-- SMTP sending
-- IMAP/mailbox synchronization
-- attachments
-- spam filtering
-- password reset
-- rate limiting and abuse prevention
+## Frontend
 
-Never put SMTP passwords, API secret keys, database credentials, or private tokens into GitHub Pages JavaScript.
+Use `frontend/app.js` as the API integration layer for the existing GitHub Pages app. Set:
+
+`API_BASE = "https://api.rebotics.in/api"`
+
+Do not put SMTP/API secrets in GitHub Pages JavaScript.
