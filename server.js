@@ -26,7 +26,12 @@ app.get('/health', async (_req,res) => {
   try { await pool.query('SELECT 1'); res.json({ ok:true, service:'rebotics-mail-api' }); }
   catch { res.status(503).json({ ok:false }); }
 });
-
+app.get('/', (_req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    service: 'rebotics-mail-api'
+  });
+});
 app.use('/api/auth', authRoutes);
 app.use('/api/inbound', inboundRoutes);
 app.use('/api/messages', requireAuth, messageRoutes);
