@@ -29,5 +29,16 @@ app.use('/api/attachments',attachments);
 app.use(express.static(path.join(__dirname,'public'),{extensions:['html']}));
 app.use((req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
 const port=Number(process.env.PORT||8080);
+
+function validateRuntimeConfig() {
+  const required = ['DB_HOST','DB_NAME','DB_USER','DB_PASSWORD','JWT_SECRET','MAIL_DOMAIN'];
+  const missing = required.filter((key) => !String(process.env[key] || '').trim());
+  if (missing.length) {
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+  console.log(`Runtime configuration OK: DB=${Boolean(process.env.DB_HOST)}, JWT_SECRET=${Boolean(process.env.JWT_SECRET)}, MAIL_DOMAIN=${process.env.MAIL_DOMAIN}`);
+}
+
+validateRuntimeConfig();
 await initDb();
 app.listen(port,()=>console.log(`Rebotics Mail listening on ${port}`));
