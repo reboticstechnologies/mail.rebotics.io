@@ -14,7 +14,9 @@ const cookieOptions = () => ({
 });
 
 function makeToken(user) {
-  return jwt.sign({ id: user.id, email: user.email, displayName: user.display_name }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  const secret = String(process.env.JWT_SECRET || '').trim();
+  if (!secret) throw new Error('JWT_SECRET is not available to the running application');
+  return jwt.sign({ id: user.id, email: user.email, displayName: user.display_name }, secret, { expiresIn: '7d' });
 }
 
 router.post('/register', async (req, res) => {
@@ -25,14 +27,32 @@ router.post('/register', async (req, res) => {
     const normalized = String(email || '').trim().toLowerCase();
     if (!/^\S+@\S+$/.test(normalized) || !normalized.endsWith(`@${domain}`)) return res.status(400).json({ error: `Use an @${domain} address` });
     if (String(password || '').length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    const [exists] = await pool.query('SELECT id FROM users WHERE email=?', [normalized]);
-    if (exists.length) return res.status(409).json({ error: 'Email address already exists' });
-    const hash = await bcrypt.hash(password, 12);
-    const name = String(displayName || normalized.split('@')[0]).trim().slice(0, 120) || normalized.split('@')[0];
-    const [result] = await pool.query('INSERT INTO users (email,password_hash,display_name) VALUES (?,?,?)', [normalized, hash, name]);
-    const user = { id: result.insertId, email: normalized, display_name: name };
-    res.cookie('rebotics_session', makeToken(user), cookieOptions());
-    res.json({ user: { id: user.id, email: user.email, displayName: user.display_name } });
+    if (!String(process.env.JWT_SECRET || '').trim()) {
+      console.error('Registration blocked: JWT_SECRET is missing from the running environment');
+      return res.status(503).json({ error: 'Server configuration incomplete: JWT_SECRET is missing' });
+    }
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [exists] = await connection.query('SELECT id FROM users WHERE email=? FOR UPDATE', [normalized]);
+      if (exists.length) {
+        await connection.rollback();
+        return res.status(409).json({ error: 'Email address already exists' });
+      }
+      const hash = await bcrypt.hash(password, 12);
+      const name = String(displayName || normalized.split('@')[0]).trim().slice(0, 120) || normalized.split('@')[0];
+      const [result] = await connection.query('INSERT INTO users (email,password_hash,display_name) VALUES (?,?,?)', [normalized, hash, name]);
+      const user = { id: result.insertId, email: normalized, display_name: name };
+      const token = makeToken(user);
+      await connection.commit();
+      res.cookie('rebotics_session', token, cookieOptions());
+      res.json({ user: { id: user.id, email: user.email, displayName: user.display_name } });
+    } catch (e) {
+      try { await connection.rollback(); } catch {}
+      throw e;
+    } finally {
+      connection.release();
+    }
   } catch (e) { console.error(e); res.status(500).json({ error: 'Registration failed' }); }
 });
 
@@ -43,6 +63,10 @@ router.post('/login', async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM users WHERE email=? LIMIT 1', [email]);
     const user = rows[0];
     if (!user || !(await bcrypt.compare(password, user.password_hash))) return res.status(401).json({ error: 'Invalid email or password' });
+    if (!String(process.env.JWT_SECRET || '').trim()) {
+      console.error('Login blocked: JWT_SECRET is missing from the running environment');
+      return res.status(503).json({ error: 'Server configuration incomplete: JWT_SECRET is missing' });
+    }
     res.cookie('rebotics_session', makeToken(user), cookieOptions());
     res.json({ user: { id: user.id, email: user.email, displayName: user.display_name } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Login failed' }); }
